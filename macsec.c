@@ -1,18 +1,5 @@
-/*
- * Copyright (c) 2021-2023, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2019-2023, NVIDIA CORPORATION. All rights reserved */
 
 #ifdef MACSEC_SUPPORT
 #include "ether_linux.h"
@@ -59,7 +46,7 @@ static irqreturn_t macsec_ns_isr_thread(int irq, void *data)
 	struct osi_core_priv_data *osi_core = pdata->osi_core;
 	int ret = 0;
 	int i = 0;
-	struct epl_error_report_frame error_report;
+	struct epl_error_report_frame error_report = {0};
 
 	mutex_lock(&pdata->hsi_lock);
 	if (osi_core->hsi.macsec_report_err) {
@@ -204,14 +191,6 @@ int macsec_close(struct macsec_priv_data *macsec_pdata)
 	int ret = 0;
 
 	PRINT_ENTRY();
-	/* Disable the macsec controller */
-	ret = osi_macsec_en(pdata->osi_core, OSI_DISABLE);
-	if (ret < 0) {
-		dev_err(dev, "%s: Failed to enable macsec Tx/Rx, %d\n",
-			__func__, ret);
-		return ret;
-	}
-	macsec_pdata->enabled = OSI_DISABLE;
 	osi_macsec_deinit(pdata->osi_core);
 
 	if (macsec_pdata->is_irq_allocated & OSI_BIT(1)) {
@@ -222,6 +201,7 @@ int macsec_close(struct macsec_priv_data *macsec_pdata)
 		devm_free_irq(dev, macsec_pdata->s_irq, macsec_pdata);
 		macsec_pdata->is_irq_allocated &= ~OSI_BIT(0);
 	}
+	macsec_pdata->enabled = OSI_DISABLE;
 
 	PRINT_EXIT();
 
@@ -275,7 +255,8 @@ int macsec_open(struct macsec_priv_data *macsec_pdata,
 	macsec_pdata->is_irq_allocated |= OSI_BIT(1);
 
 	/* Invoke OSI HW initialization, initialize standard BYP entries */
-	ret = osi_macsec_init(pdata->osi_core, pdata->osi_core->mtu);
+	ret = osi_macsec_init(pdata->osi_core, pdata->osi_core->mtu,
+			      (nveu8_t * const)pdata->ndev->dev_addr);
 	if (ret < 0) {
 		dev_err(dev, "osi_macsec_init failed, %d\n", ret);
 		goto err_osi_init;
@@ -291,20 +272,14 @@ int macsec_open(struct macsec_priv_data *macsec_pdata,
 	}
 #endif /* !MACSEC_KEY_PROGRAM */
 
-	/* Enable the macsec controller */
-	ret = osi_macsec_en(pdata->osi_core,
-			    (OSI_MACSEC_TX_EN | OSI_MACSEC_RX_EN));
-	if (ret < 0) {
-		dev_err(dev, "%s: Failed to enable macsec Tx/Rx, %d\n",
-			__func__, ret);
-		goto err_osi_en;
-	}
-	macsec_pdata->enabled = (OSI_MACSEC_TX_EN | OSI_MACSEC_RX_EN);
+	macsec_pdata->enabled = OSI_ENABLE;
 
 	goto exit;
 
+#if !defined(MACSEC_KEY_PROGRAM) && !defined(NVPKCS_MACSEC)
 err_osi_en:
 	osi_macsec_deinit(pdata->osi_core);
+#endif /* !MACSEC_KEY_PROGRAM */
 err_osi_init:
 	devm_free_irq(dev, macsec_pdata->ns_irq, macsec_pdata);
 err_ns_irq:
@@ -312,49 +287,6 @@ err_ns_irq:
 exit:
 	PRINT_EXIT();
 	return ret;
-}
-
-/**
- * Calling macsec_close as part of macsec_suspend as supplicant
- * is disabling the current AN and creating new AN as part of
- * resume.
- */
-int macsec_suspend(struct macsec_priv_data *macsec_pdata)
-{
-	struct ether_priv_data *pdata = macsec_pdata->ether_pdata;
-	struct device *dev = pdata->dev;
-	int ret = 0;
-
-	ret = macsec_close(macsec_pdata);
-	if (ret < 0) {
-		dev_err(dev, "Failed to close macsec\n");
-		return ret;
-	}
-	return ret;
-}
-
-/**
- * Calling macsec_open as part of macsec_resume as supplicant
- * is disabling the current AN and creating new AN as part of
- * resume.
- */
-int macsec_resume(struct macsec_priv_data *macsec_pdata)
-{
-	struct ether_priv_data *pdata = macsec_pdata->ether_pdata;
-	struct device *dev = pdata->dev;
-	struct osi_core_priv_data *osi_core = pdata->osi_core;
-	int ret = 0;
-
-	if ((osi_core->use_virtualization == OSI_DISABLE) &&
-	    (macsec_pdata->ns_rst)) {
-		ret = reset_control_reset(macsec_pdata->ns_rst);
-		if (ret < 0) {
-			dev_err(dev, "failed to reset macsec\n");
-			return ret;
-		}
-	}
-
-	return macsec_open(macsec_pdata, OSI_NULL);
 }
 
 static int macsec_get_platform_res(struct macsec_priv_data *macsec_pdata)
@@ -450,7 +382,7 @@ static struct macsec_priv_data *genl_to_macsec_pdata(struct genl_info *info)
 
 	PRINT_ENTRY();
 
-	nla_strlcpy(ifname, attrs[NV_MACSEC_ATTR_IFNAME], sizeof(ifname));
+	nla_strscpy(ifname, attrs[NV_MACSEC_ATTR_IFNAME], sizeof(ifname));
 	ndev = dev_get_by_name(genl_info_net(info),
 			       ifname);
 	if (!ndev) {
@@ -481,87 +413,6 @@ static struct macsec_supplicant_data *macsec_get_supplicant(
 		}
 	}
 	return NULL;
-}
-
-static int update_prot_frame(
-			struct macsec_priv_data *macsec_pdata) {
-	struct macsec_supplicant_data *supplicant = macsec_pdata->supplicant;
-	int i;
-	int enable = OSI_NONE;
-
-	/* check any supplicant instance set */
-	for (i = 0; i < OSI_MAX_NUM_SC; i++) {
-		if (supplicant[i].protect_frames == OSI_ENABLE) {
-			enable = OSI_ENABLE;
-			break;
-		}
-	}
-	return enable;
-}
-
-static int update_set_controlled_port(
-			struct macsec_priv_data *macsec_pdata) {
-	struct macsec_supplicant_data *supplicant = macsec_pdata->supplicant;
-	int i;
-	int enable = OSI_NONE;
-
-	/* check any supplicant instance set */
-	for (i = 0; i < OSI_MAX_NUM_SC; i++) {
-		if (supplicant[i].enabled == OSI_ENABLE) {
-			enable = OSI_ENABLE;
-			break;
-		}
-	}
-	return enable;
-}
-
-static int macsec_set_prot_frames(struct sk_buff *skb, struct genl_info *info)
-{
-	struct nlattr **attrs = info->attrs;
-	unsigned int enable;
-	struct macsec_priv_data *macsec_pdata;
-	struct macsec_supplicant_data *supplicant;
-	struct ether_priv_data *pdata = NULL;
-	int ret = 0;
-
-	PRINT_ENTRY();
-	if (!attrs[NV_MACSEC_ATTR_IFNAME] ||
-	    !attrs[NV_MACSEC_ATTR_PROT_FRAMES_EN]) {
-		ret = -EINVAL;
-		goto exit;
-	}
-
-	macsec_pdata = genl_to_macsec_pdata(info);
-	if (!macsec_pdata) {
-		ret = -EPROTO;
-		goto exit;
-	}
-	pdata = macsec_pdata->ether_pdata;
-
-	if (!netif_running(pdata->ndev)) {
-		ret = -ENETDOWN;
-		dev_err(pdata->dev, "%s: MAC interface down!!\n", __func__);
-		goto exit;
-	}
-
-	mutex_lock(&macsec_pdata->lock);
-	supplicant = macsec_get_supplicant(macsec_pdata, info->snd_portid);
-	if (!supplicant) {
-		ret = -EPROTO;
-		dev_err(pdata->dev, "%s: failed to get supplicant data",
-			__func__);
-		goto err_unlock;
-	}
-	supplicant->protect_frames =
-		nla_get_u32(attrs[NV_MACSEC_ATTR_PROT_FRAMES_EN]);
-	enable = update_prot_frame(macsec_pdata);
-	macsec_pdata->protect_frames = enable;
-
-err_unlock:
-	mutex_unlock(&macsec_pdata->lock);
-exit:
-	PRINT_EXIT();
-	return ret;
 }
 
 static int macsec_set_cipher(struct sk_buff *skb, struct genl_info *info)
@@ -621,71 +472,6 @@ static int macsec_set_cipher(struct sk_buff *skb, struct genl_info *info)
 err_unlock:
 	mutex_unlock(&macsec_pdata->lock);
 exit:
-	return ret;
-}
-
-static int macsec_set_controlled_port(struct sk_buff *skb,
-				      struct genl_info *info)
-{
-	struct nlattr **attrs = info->attrs;
-	struct macsec_priv_data *macsec_pdata;
-	unsigned int enable = 0;
-	unsigned int macsec_en = 0;
-	struct macsec_supplicant_data *supplicant;
-	struct ether_priv_data *pdata = NULL;
-	int ret = 0;
-
-	PRINT_ENTRY();
-	if (!attrs[NV_MACSEC_ATTR_IFNAME] ||
-	    !attrs[NV_MACSEC_ATTR_CTRL_PORT_EN]) {
-		ret = -EINVAL;
-		goto exit;
-	}
-
-	macsec_pdata = genl_to_macsec_pdata(info);
-	if (!macsec_pdata) {
-		ret = -EPROTO;
-		goto exit;
-	}
-	pdata = macsec_pdata->ether_pdata;
-
-	if (!netif_running(pdata->ndev)) {
-		ret = -ENETDOWN;
-		dev_err(pdata->dev, "%s: MAC interface down!!\n", __func__);
-		goto exit;
-	}
-
-	mutex_lock(&macsec_pdata->lock);
-	supplicant = macsec_get_supplicant(macsec_pdata, info->snd_portid);
-	if (!supplicant) {
-		ret = -EPROTO;
-		dev_err(pdata->dev, "%s: failed to get supplicant data",
-			__func__);
-		goto err_unlock;
-	}
-
-	supplicant->enabled = nla_get_u32(attrs[NV_MACSEC_ATTR_CTRL_PORT_EN]);
-	enable = update_set_controlled_port(macsec_pdata);
-	if (enable) {
-		macsec_en |= OSI_MACSEC_RX_EN;
-		if (macsec_pdata->protect_frames)
-			macsec_en |= OSI_MACSEC_TX_EN;
-	}
-
-	if (macsec_pdata->enabled != macsec_en) {
-		ret = osi_macsec_en(macsec_pdata->ether_pdata->osi_core,
-				    macsec_en);
-		if (ret < 0) {
-			ret = -EPROTO;
-			goto err_unlock;
-		}
-		macsec_pdata->enabled = macsec_en;
-	}
-
-err_unlock:
-	mutex_unlock(&macsec_pdata->lock);
-exit:
-	PRINT_EXIT();
 	return ret;
 }
 
@@ -1429,11 +1215,6 @@ static const struct genl_ops nv_macsec_genl_ops[] = {
 		.flags = GENL_ADMIN_PERM,
 	},
 	{
-		.cmd = NV_MACSEC_CMD_SET_PROT_FRAMES,
-		.doit = macsec_set_prot_frames,
-		.flags = GENL_ADMIN_PERM,
-	},
-	{
 		.cmd = NV_MACSEC_CMD_SET_REPLAY_PROT,
 		.doit = macsec_set_replay_prot,
 		.flags = GENL_ADMIN_PERM,
@@ -1441,11 +1222,6 @@ static const struct genl_ops nv_macsec_genl_ops[] = {
 	{
 		.cmd = NV_MACSEC_CMD_SET_CIPHER,
 		.doit = macsec_set_cipher,
-		.flags = GENL_ADMIN_PERM,
-	},
-	{
-		.cmd = NV_MACSEC_CMD_SET_CONTROLLED_PORT,
-		.doit = macsec_set_controlled_port,
 		.flags = GENL_ADMIN_PERM,
 	},
 	{

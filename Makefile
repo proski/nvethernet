@@ -1,29 +1,28 @@
-# Copyright (c) 2018-2023, NVIDIA CORPORATION.  All rights reserved.
-#
-# This program is free software; you can redistribute it and/or modify it
-# under the terms and conditions of the GNU General Public License,
-# version 2, as published by the Free Software Foundation.
-#
-# This program is distributed in the hope it will be useful, but WITHOUT
-# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-# more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-ifneq ($(CONFIG_TEGRA_LINUX_SAFETY),y)
+#SPDX-License-Identifier: GPL-2.0-only
+#Copyright (c) 2019-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 OSI_COMMON := nvethernetrm/osi/common
 OSI_CORE := nvethernetrm/osi/core
 OSI_DMA := nvethernetrm/osi/dma
 
-obj-$(CONFIG_NVETHERNET) += nvethernet.o
+obj-m += nvethernet.o
 
+# If CONFIG_TEGRA_NVPPS is not set, enable by default
+CONFIG_TEGRA_NVPPS ?= y
+ifeq ($(CONFIG_TEGRA_NVPPS),y)
+ccflags-y += -DCONFIG_TEGRA_NVPPS
+endif
+
+ifeq ($(findstring ack_src,$(NV_BUILD_KERNEL_OPTIONS)),)
 # These CFLAGS must not be shared/used in OSI. These are local to Linux
-ccflags-y +=  -DLINUX_OS -DNET30 -DNVPKCS_MACSEC -DLINUX_IVC -DUPDATED_PAD_CAL \
-              -I$(srctree.nvidia)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/include \
-	     -I$(srctree.nvidia)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/osi/common/include
+ccflags-y += -DLINUX_OS -DNET30 -DNVPKCS_MACSEC -DLINUX_IVC -mno-outline-atomics -Werror=frame-larger-than=2048 \
+	     -I$(srctree.nvidia-oot)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/include \
+	     -I$(srctree.nvidia-oot)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/osi/common/include
+else
+ccflags-y += -DLINUX_OS -DNET30 -DNVPKCS_MACSEC -DLINUX_IVC \
+	     -I$(srctree.nvidia-oot)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/include \
+	     -I$(srctree.nvidia-oot)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/osi/common/include
+endif
 
 nvethernet-objs:= ether_linux.o \
 		  osd.o \
@@ -33,6 +32,7 @@ nvethernet-objs:= ether_linux.o \
 		  ioctl.o \
 		  ptp.o \
 		  macsec.o \
+		  selftests.o \
 		  $(OSI_CORE)/osi_core.o \
 		  $(OSI_CORE)/osi_hal.o \
 		  $(OSI_CORE)/macsec.o \
@@ -57,8 +57,7 @@ nvethernet-objs:= ether_linux.o \
 		  $(OSI_CORE)/vlan_filter.o \
 		  $(OSI_CORE)/debug.o
 
-include $(srctree.nvidia)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/include/config.tmk
+include $(srctree.nvidia-oot)/drivers/net/ethernet/nvidia/nvethernet/nvethernetrm/include/config.tmk
 
-nvethernet-$(CONFIG_NVETHERNET_SELFTESTS) += selftests.o
-
-endif
+# Undefine HSI_SUPPORT if CONFIG_TEGRA_EPL is not defined.
+ccflags-y += $(if $(CONFIG_TEGRA_EPL),,-UHSI_SUPPORT)

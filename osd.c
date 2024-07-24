@@ -1,18 +1,5 @@
-/*
- * Copyright (c) 2018-2023, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2019-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
 
 #include "ether_linux.h"
 
@@ -74,7 +61,7 @@ empty:
 	raw_spin_lock_irqsave(&pdata->txts_lock, flags);
 	idx = ether_get_free_tx_ts_node(pdata);
 	if (idx == ETHER_MAX_PENDING_SKB_CNT) {
-		dev_dbg(pdata->dev,
+		dev_err(pdata->dev,
 			"No free node to store pending SKB\n");
 		dev_consume_skb_any(skb);
 		raw_spin_unlock_irqrestore(&pdata->txts_lock, flags);
@@ -158,11 +145,13 @@ static void osd_log(void *priv,
 				 "[%s][%d][type:0x%x][loga-0x%llx] %s",
 				 func, line, type, loga, err);
 			break;
+#ifndef OSI_STRIPPED_LIB
 		case OSI_LOG_WARN:
 			dev_warn(((struct ether_priv_data *)priv)->dev,
 				 "[%s][%d][type:0x%x][loga-0x%llx] %s",
 				 func, line, type, loga, err);
 			break;
+#endif /* !OSI_STRIPPED_LIB */
 		case OSI_LOG_ERR:
 			dev_err(((struct ether_priv_data *)priv)->dev,
 				"[%s][%d][type:0x%x][loga-0x%llx] %s",
@@ -178,10 +167,12 @@ static void osd_log(void *priv,
 			pr_info("[%s][%d][type:0x%x][loga-0x%llx] %s",
 				func, line, type, loga, err);
 			break;
+#ifndef OSI_STRIPPED_LIB
 		case OSI_LOG_WARN:
 			pr_warn("[%s][%d][type:0x%x][loga-0x%llx] %s",
 				func, line, type, loga, err);
 			break;
+#endif /* !OSI_STRIPPED_LIB */
 		case OSI_LOG_ERR:
 			pr_err("[%s][%d][type:0x%x][loga-0x%llx] %s",
 			       func, line, type, loga, err);
@@ -217,7 +208,7 @@ static inline int ether_alloc_skb(struct ether_priv_data *pdata,
 	unsigned long val;
 
 	if (((rx_swcx->flags & OSI_RX_SWCX_REUSE) == OSI_RX_SWCX_REUSE) &&
-	    (rx_swcx->buf_virt_addr != pdata->osi_dma->resv_buf_virt_addr)) {
+	    (rx_swcx->buf_virt_addr != pdata->resv_buf_virt_addr)) {
 		/* Skip buffer allocation and DMA mapping since
 		 * PTP software context will have valid buffer and
 		 * DMA addresses so use them as is.
@@ -231,8 +222,8 @@ static inline int ether_alloc_skb(struct ether_priv_data *pdata,
 
 	if (unlikely(skb == NULL)) {
 		dev_err(pdata->dev, "RX skb allocation failed, using reserved buffer\n");
-		rx_swcx->buf_virt_addr = pdata->osi_dma->resv_buf_virt_addr;
-		rx_swcx->buf_phy_addr = pdata->osi_dma->resv_buf_phy_addr;
+		rx_swcx->buf_virt_addr = pdata->resv_buf_virt_addr;
+		rx_swcx->buf_phy_addr = pdata->resv_buf_phy_addr;
 		rx_swcx->flags |= OSI_RX_SWCX_BUF_VALID;
 		val = pdata->xstats.re_alloc_rxbuf_failed[chan];
 		pdata->xstats.re_alloc_rxbuf_failed[chan] =
@@ -253,8 +244,8 @@ static inline int ether_alloc_skb(struct ether_priv_data *pdata,
 	if (!rx_swcx->buf_virt_addr) {
 		dev_err(pdata->dev,
 			"page pool allocation failed using resv_buf\n");
-		rx_swcx->buf_virt_addr = pdata->osi_dma->resv_buf_virt_addr;
-		rx_swcx->buf_phy_addr = pdata->osi_dma->resv_buf_phy_addr;
+		rx_swcx->buf_virt_addr = pdata->resv_buf_virt_addr;
+		rx_swcx->buf_phy_addr = pdata->resv_buf_phy_addr;
 		rx_swcx->flags |= OSI_RX_SWCX_BUF_VALID;
 		val = pdata->xstats.re_alloc_rxbuf_failed[chan];
 		pdata->xstats.re_alloc_rxbuf_failed[chan] =
@@ -633,13 +624,25 @@ static void osd_receive_packet(void *priv, struct osi_rx_ring *rx_ring,
 #endif
 	dma_addr_t dma_addr = (dma_addr_t)rx_swcx->buf_phy_addr;
 	struct net_device *ndev = pdata->ndev;
+#ifndef OSI_STRIPPED_LIB
 	struct osi_pkt_err_stats *pkt_err_stat = &pdata->osi_dma->pkt_err_stats;
-	struct skb_shared_hwtstamps *shhwtstamp;
 	unsigned long val;
+#endif /* !OSI_STRIPPED_LIB */
+	struct skb_shared_hwtstamps *shhwtstamp;
 
 #ifndef ETHER_PAGE_POOL
 	dma_unmap_single(pdata->dev, dma_addr, dma_buf_len, DMA_FROM_DEVICE);
 #endif
+	/* Check for reserve buffer */
+	if (osi_unlikely(rx_swcx->buf_virt_addr ==
+				pdata->resv_buf_virt_addr)) {
+		rx_swcx->buf_virt_addr  = OSI_NULL;
+		rx_swcx->buf_phy_addr  = 0;
+		rx_swcx->flags |= OSI_RX_SWCX_PROCESSED;
+		ether_realloc_rx_skb(pdata, rx_ring, chan);
+		return;
+	}
+
 	/* Process only the Valid packets */
 	if (likely((rx_pkt_cx->flags & OSI_PKT_CX_VALID) ==
 		   OSI_PKT_CX_VALID)) {
@@ -671,6 +674,7 @@ static void osd_receive_packet(void *priv, struct osi_rx_ring *rx_ring,
 			skb->ip_summed = CHECKSUM_NONE;
 		}
 
+#ifndef OSI_STRIPPED_LIB
 		if ((rx_pkt_cx->flags & OSI_PKT_CX_RSS) == OSI_PKT_CX_RSS) {
 			skb_set_hash(skb, rx_pkt_cx->rx_hash,
 				     rx_pkt_cx->rx_hash_type);
@@ -680,9 +684,8 @@ static void osd_receive_packet(void *priv, struct osi_rx_ring *rx_ring,
 			val = pdata->osi_dma->dstats.rx_vlan_pkt_n;
 			pdata->osi_dma->dstats.rx_vlan_pkt_n =
 				osi_update_stats_counter(val, 1UL);
-			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
-					       rx_pkt_cx->vlan_tag);
 		}
+#endif /* !OSI_STRIPPED_LIB */
 
 		/* Handle time stamp */
 		if ((rx_pkt_cx->flags & OSI_PKT_CX_PTP) == OSI_PKT_CX_PTP) {
@@ -707,8 +710,10 @@ static void osd_receive_packet(void *priv, struct osi_rx_ring *rx_ring,
 			netif_receive_skb(skb);
 		}
 	} else {
+#ifndef OSI_STRIPPED_LIB
 		ndev->stats.rx_crc_errors = pkt_err_stat->rx_crc_error;
 		ndev->stats.rx_frame_errors = pkt_err_stat->rx_frame_error;
+#endif /* !OSI_STRIPPED_LIB */
 		ndev->stats.rx_fifo_errors = osi_core->mmc.mmc_rx_fifo_overflow;
 		ndev->stats.rx_errors++;
 #ifdef ETHER_PAGE_POOL

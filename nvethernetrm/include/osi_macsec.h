@@ -154,22 +154,22 @@
 /** @} */
 
 /**
- * @addtogroup MACSEC related helper MACROs
- *
- * @brief MACSEC generic helper MACROs
- * @{
- */
-#define OSI_MACSEC_TX_EN	OSI_BIT(0)
-#define OSI_MACSEC_RX_EN	OSI_BIT(1)
-/** @} */
-
-/**
  * @brief Indicates different operations on MACSEC SA
  */
 #ifdef MACSEC_KEY_PROGRAM
 #define OSI_CREATE_SA           1U
 #endif /* MACSEC_KEY_PROGRAM */
 #define OSI_ENABLE_SA           2U
+
+/**
+ * @addtogroup AES ciphers
+ *
+ * @brief Helper macro's for SC setup
+ * @{
+ */
+#define OSI_MACSEC_SC_VALID		0U
+#define OSI_MACSEC_SC_DUMMY		1U
+/** @} */
 
 /**
  * @brief MACSEC SA State LUT entry outputs structure
@@ -331,7 +331,7 @@ struct osi_macsec_dbg_buf_config {
 struct osi_macsec_core_ops {
 	/** macsec init */
 	nve32_t (*init)(struct osi_core_priv_data *const osi_core,
-			nveu32_t mtu);
+			nveu32_t mtu, nveu8_t *const mac_addr);
 	/** macsec de-init */
 	nve32_t (*deinit)(struct osi_core_priv_data *const osi_core);
 	/** Macsec irq handler */
@@ -352,9 +352,6 @@ struct osi_macsec_core_ops {
 	nve32_t (*loopback_config)(struct osi_core_priv_data *const osi_core,
 			       nveu32_t enable);
 #endif /* DEBUG_MACSEC */
-	/** macsec enable */
-	nve32_t (*macsec_en)(struct osi_core_priv_data *const osi_core,
-			 nveu32_t enable);
 	/** macsec config SA in HW LUT */
 	nve32_t (*config)(struct osi_core_priv_data *const osi_core,
 		      struct osi_macsec_sc_info *const sc,
@@ -439,7 +436,7 @@ nve32_t osi_init_macsec_ops(struct osi_core_priv_data *const osi_core);
  * @retval -1 on failure
  */
 nve32_t osi_macsec_init(struct osi_core_priv_data *const osi_core,
-			nveu32_t mtu);
+			nveu32_t mtu, nveu8_t *const macsec_vf_mac);
 
 /**
  * @brief osi_macsec_deinit - De-Initialize the macsec controller
@@ -602,34 +599,6 @@ nve32_t osi_macsec_cipher_config(struct osi_core_priv_data *const osi_core,
 nve32_t osi_macsec_loopback(struct osi_core_priv_data *const osi_core,
 			nveu32_t enable);
 #endif /* DEBUG_MACSEC */
-
-/**
- * @brief osi_macsec_en - API to enable/disable macsec
- *
- * @note
- * Algorithm:
- *  - Return -1 if passed enable param is invalid
- *  - Return -1 if osi core or ops is null
- *  - Enables/disables macsec
- *  - Refer to MACSEC column of <<******, (sequence diagram)>> for API details.
- *  - TraceID: ***********
- *
- * @param[in] osi_core: OSI core private data structure
- * @param[in] enable: parameter to enable or disable
- *
- * @pre MACSEC needs to be out of reset and proper clock configured.
- *
- * @note
- * API Group:
- * - Initialization: No
- * - Run time: Yes
- * - De-initialization: No
- *
- * @retval 0 on success
- * @retval -1 on failure
- */
-nve32_t osi_macsec_en(struct osi_core_priv_data *const osi_core,
-		  nveu32_t enable);
 
 /**
  * @brief osi_macsec_config - Updates SC or SA in the macsec

@@ -85,7 +85,9 @@
 #define MAC_PFR_HPF			OSI_BIT(10)
 #define MAC_PFR_VTFE			OSI_BIT(16)
 #define MAC_PFR_IPFE			OSI_BIT(20)
+#if !defined(L3L4_WILDCARD_FILTER)
 #define MAC_PFR_IPFE_SHIFT		20U
+#endif /* !L3L4_WILDCARD_FILTER */
 #define MAC_PFR_DNTU			OSI_BIT(21)
 #define MAC_PFR_RA			OSI_BIT(31)
 
@@ -116,6 +118,27 @@
 #define MAC_L3L4_CTR_DMCHN_SHIFT	24
 #define EQOS_MAC_L3L4_CTR_DMCHEN_SHIFT	28
 #define MGBE_MAC_L3L4_CTR_DMCHEN_SHIFT	31
+
+#ifdef HSI_SUPPORT
+/**
+ * @addtogroup MMC HW register offsets
+ *
+ * @brief MMC HW register offsets
+ * @{
+ */
+#define EQOS_MMC_RXCRCERROR			0x00794
+#define EQOS_MMC_RXIPV4_HDRERR_PKTS		0x00814
+#define EQOS_MMC_RXIPV6_HDRERR_PKTS		0x00828
+#define EQOS_MMC_RXUDP_ERR_PKTS			0x00834
+#define EQOS_MMC_RXTCP_ERR_PKTS			0x0083c
+
+#define MGBE_MMC_RXCRCERROR_L			0x00928
+#define MGBE_MMC_RXIPV4_HDRERR_PKTS_L		0x00A6C
+#define MGBE_MMC_RXIPV6_HDRERR_PKTS_L		0x00A94
+#define MGBE_MMC_RXUDP_ERR_PKTS_L		0x00AAC
+#define MGBE_MMC_RXTCP_ERR_PKTS_L		0x00ABC
+/** @} */
+#endif /* HSI_SUPPORT */
 
 /**
  * @addtogroup typedef related info
@@ -154,8 +177,10 @@ nve32_t hw_ptp_tsc_capture(struct osi_core_priv_data *const osi_core,
 			   struct osi_core_ptp_tsc_data *data);
 nve32_t hw_config_mac_pkt_filter_reg(struct osi_core_priv_data *const osi_core,
 				     const struct osi_filter *filter);
+#if !defined(L3L4_WILDCARD_FILTER)
 nve32_t hw_config_l3_l4_filter_enable(struct osi_core_priv_data *const osi_core,
 				      const nveu32_t filter_enb_dis);
+#endif /* !L3L4_WILDCARD_FILTER */
 nve32_t hw_config_est(struct osi_core_priv_data *const osi_core,
 		      struct osi_est_config *const est);
 nve32_t hw_config_fpe(struct osi_core_priv_data *const osi_core,
@@ -175,6 +200,7 @@ void prepare_l3l4_registers(const struct osi_core_priv_data *const osi_core,
 #ifdef HSI_SUPPORT
 nve32_t hsi_common_error_inject(struct osi_core_priv_data *osi_core,
 				nveu32_t error_code);
+void hsi_read_err(struct osi_core_priv_data *const osi_core);
 #endif
 nve32_t hw_validate_avb_input(struct osi_core_priv_data *const osi_core,
 			      const struct osi_core_avb_algorithm *const avb);

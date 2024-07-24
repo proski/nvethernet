@@ -1,18 +1,5 @@
-/*
- * Copyright (c) 2018-2023, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2019-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
 
 #include <linux/version.h>
 #include "ether_linux.h"
@@ -23,7 +10,6 @@
  */
 static DEFINE_RAW_SPINLOCK(ether_ts_lock);
 
-#ifdef CONFIG_TEGRA_PTP_NOTIFIER
 /**
  * @brief Function used to get PTP time
  * @param[in] data: OSI core private data structure
@@ -93,8 +79,6 @@ static inline int ether_get_hw_time(struct net_device *dev,
 	return 0;
 }
 
-#endif
-
 /**
  * @brief Adjust MAC hardware time
  *
@@ -141,11 +125,16 @@ static int ether_adjust_time(struct ptp_clock_info *ptp, s64 nsec_delta)
  *
  * @param[in] ptp: Pointer to ptp_clock_info structure.
  * @param[in] ppb: Desired period change in parts per billion.
+ * @param[in] scaled_ppm: Desired period change in parts per million.
  *
  * @retval 0 on success
  * @retval "negative value" on failure.
  */
-static int ether_adjust_freq(struct ptp_clock_info *ptp, s32 ppb)
+#if KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE
+static int ether_adjust_clock(struct ptp_clock_info *ptp, s32 ppb)
+#else
+static int ether_adjust_clock(struct ptp_clock_info *ptp, long scaled_ppm)
+#endif
 {
 	struct ether_priv_data *pdata = container_of(ptp,
 						     struct ether_priv_data,
@@ -154,6 +143,9 @@ static int ether_adjust_freq(struct ptp_clock_info *ptp, s32 ppb)
 	struct osi_ioctl ioctl_data = {};
 	unsigned long flags;
 	int ret = -1;
+#if KERNEL_VERSION(6, 2, 0) <= LINUX_VERSION_CODE
+	s32 ppb = scaled_ppm_to_ppb(scaled_ppm);
+#endif
 
 	raw_spin_lock_irqsave(&pdata->ptp_lock, flags);
 
@@ -261,7 +253,11 @@ static struct ptp_clock_info ether_ptp_clock_ops = {
 	.n_ext_ts = 0,
 	.n_per_out = 0,
 	.pps = 0,
-	.adjfreq = ether_adjust_freq,
+#if KERNEL_VERSION(6, 2, 0) > LINUX_VERSION_CODE
+	.adjfreq = ether_adjust_clock,
+#else
+	.adjfine = ether_adjust_clock,
+#endif
 	.adjtime = ether_adjust_time,
 	.gettime64 = ether_get_time,
 	.settime64 = ether_set_time,
@@ -272,11 +268,7 @@ static int ether_early_ptp_init(struct ether_priv_data *pdata)
 	struct osi_core_priv_data *osi_core = pdata->osi_core;
 	struct osi_ioctl ioctl_data = {};
 	int ret = 0;
-#if KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
-	struct timespec now;
-#else
 	struct timespec64 now;
-#endif
 
 	osi_core->ptp_config.ptp_filter =
 		OSI_MAC_TCR_TSENA | OSI_MAC_TCR_TSCFUPDT |
@@ -288,11 +280,7 @@ static int ether_early_ptp_init(struct ether_priv_data *pdata)
 	 * can make use of it for coarse correction */
 	osi_core->ptp_config.ptp_clock = pdata->ptp_ref_clock_speed;
 	/* initialize system time */
-#if KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
-	getnstimeofday(&now);
-#else
 	ktime_get_real_ts64(&now);
-#endif
 	/* Store sec and nsec */
 	osi_core->ptp_config.sec = now.tv_sec;
 	osi_core->ptp_config.nsec = now.tv_nsec;
@@ -348,6 +336,7 @@ void ether_ptp_remove(struct ether_priv_data *pdata)
 	}
 }
 
+#ifndef OSI_STRIPPED_LIB
 /**
  * @brief Configure Slot function
  *
@@ -399,24 +388,21 @@ static void ether_config_slot_function(struct ether_priv_data *pdata, u32 set)
 	/* Call OSI slot function to configure */
 	osi_config_slot_function(osi_dma, set);
 }
+#endif /* !OSI_STRIPPED_LIB */
 
 int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 		struct ifreq *ifr)
 {
 	struct osi_core_priv_data *osi_core = pdata->osi_core;
 	struct osi_dma_priv_data *osi_dma = pdata->osi_dma;
-#ifdef CONFIG_TEGRA_PTP_NOTIFIER
+#ifdef CONFIG_TEGRA_NVPPS
 	struct net_device *ndev = pdata->ndev;
 #endif
 	struct osi_ioctl ioctl_data = {};
 	struct hwtstamp_config config;
 	unsigned int hwts_rx_en = 1;
 	int ret;
-#if KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
-	struct timespec now;
-#else
 	struct timespec64 now;
-#endif
 
 	if (pdata->hw_feat.tsstssel == OSI_DISABLE) {
 		dev_info(pdata->dev, "HW timestamping not available\n");
@@ -469,15 +455,21 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 
 		/* PTP v1, UDP, Sync packet */
 	case HWTSTAMP_FILTER_PTP_V1_L4_SYNC:
-		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSEVENTENA |
+		osi_core->ptp_config.ptp_filter =
+#ifndef OSI_STRIPPED_LIB
+						  OSI_MAC_TCR_TSEVENTENA |
+#endif /* !OSI_STRIPPED_LIB */
 						  OSI_MAC_TCR_TSIPV4ENA	 |
 						  OSI_MAC_TCR_TSIPV6ENA;
 		break;
 
 		/* PTP v1, UDP, Delay_req packet */
 	case HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ:
-		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSMASTERENA |
+		osi_core->ptp_config.ptp_filter =
+#ifndef OSI_STRIPPED_LIB
+						  OSI_MAC_TCR_TSMASTERENA |
 						  OSI_MAC_TCR_TSEVENTENA  |
+#endif /* !OSI_STRIPPED_LIB */
 						  OSI_MAC_TCR_TSIPV4ENA   |
 						  OSI_MAC_TCR_TSIPV6ENA;
 		break;
@@ -492,7 +484,10 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 
 		/* PTP v2, UDP, Sync packet */
 	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
-		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSEVENTENA   |
+		osi_core->ptp_config.ptp_filter =
+#ifndef OSI_STRIPPED_LIB
+						  OSI_MAC_TCR_TSEVENTENA   |
+#endif /* !OSI_STRIPPED_LIB */
 						  OSI_MAC_TCR_TSIPV4ENA    |
 						  OSI_MAC_TCR_TSIPV6ENA    |
 						  OSI_MAC_TCR_TSVER2ENA;
@@ -500,8 +495,11 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 
 		/* PTP v2, UDP, Delay_req packet */
 	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
-		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSEVENTENA   |
+		osi_core->ptp_config.ptp_filter =
+#ifndef OSI_STRIPPED_LIB
+						  OSI_MAC_TCR_TSEVENTENA   |
 						  OSI_MAC_TCR_TSMASTERENA  |
+#endif /* !OSI_STRIPPED_LIB */
 						  OSI_MAC_TCR_TSIPV4ENA    |
 						  OSI_MAC_TCR_TSIPV6ENA    |
 						  OSI_MAC_TCR_TSVER2ENA;
@@ -516,6 +514,7 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 
 		if ((osi_dma->ptp_flag & OSI_PTP_SYNC_ONESTEP) ==
 		    OSI_PTP_SYNC_ONESTEP) {
+#ifndef OSI_STRIPPED_LIB
 			osi_core->ptp_config.ptp_filter |=
 						  (OSI_MAC_TCR_TSEVENTENA |
 						   OSI_MAC_TCR_CSC);
@@ -524,6 +523,7 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 				osi_core->ptp_config.ptp_filter |=
 						  OSI_MAC_TCR_TSMASTERENA;
 			}
+#endif /* !OSI_STRIPPED_LIB */
 		} else {
 			osi_core->ptp_config.ptp_filter |=
 						  OSI_MAC_TCR_SNAPTYPSEL_1;
@@ -535,9 +535,11 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSIPV4ENA    |
 						  OSI_MAC_TCR_TSIPV6ENA    |
 						  OSI_MAC_TCR_TSVER2ENA    |
+#ifndef OSI_STRIPPED_LIB
 						  OSI_MAC_TCR_TSEVENTENA   |
-						  OSI_MAC_TCR_TSIPENA      |
-						  OSI_MAC_TCR_AV8021ASMEN;
+						  OSI_MAC_TCR_AV8021ASMEN  |
+#endif /* !OSI_STRIPPED_LIB */
+						  OSI_MAC_TCR_TSIPENA;
 		break;
 
 		/* PTP v2/802.AS1, any layer, Delay_req packet */
@@ -545,16 +547,20 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSIPV4ENA    |
 						  OSI_MAC_TCR_TSIPV6ENA    |
 						  OSI_MAC_TCR_TSVER2ENA    |
+#ifndef OSI_STRIPPED_LIB
 						  OSI_MAC_TCR_TSEVENTENA   |
 						  OSI_MAC_TCR_AV8021ASMEN  |
 						  OSI_MAC_TCR_TSMASTERENA  |
+#endif /* !OSI_STRIPPED_LIB */
 						  OSI_MAC_TCR_TSIPENA;
 		break;
 
+#ifndef OSI_STRIPPED_LIB
 		/* time stamp any incoming packet */
 	case HWTSTAMP_FILTER_ALL:
 		osi_core->ptp_config.ptp_filter = OSI_MAC_TCR_TSENALL;
 		break;
+#endif /* !OSI_STRIPPED_LIB */
 
 	default:
 		dev_err(pdata->dev, "rx_filter is out of range\n");
@@ -570,17 +576,15 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 			dev_err(pdata->dev, "Failure to disable CONFIG_PTP\n");
 			return -EFAULT;
 		}
+#ifndef OSI_STRIPPED_LIB
 		ether_config_slot_function(pdata, OSI_DISABLE);
+#endif /* !OSI_STRIPPED_LIB */
 	} else {
 		/* Store default PTP clock frequency, so that we
 		 * can make use of it for coarse correction */
 		osi_core->ptp_config.ptp_clock = pdata->ptp_ref_clock_speed;
 		/* initialize system time */
-#if KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
-		getnstimeofday(&now);
-#else
 		ktime_get_real_ts64(&now);
-#endif
 		/* Store sec and nsec */
 		osi_core->ptp_config.sec = now.tv_sec;
 		osi_core->ptp_config.nsec = now.tv_nsec;
@@ -594,11 +598,13 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 			dev_err(pdata->dev, "Failure to enable CONFIG_PTP\n");
 			return -EFAULT;
 		}
-#ifdef CONFIG_TEGRA_PTP_NOTIFIER
+#ifdef CONFIG_TEGRA_NVPPS
 		/* Register broadcasting MAC timestamp to clients */
 		tegra_register_hwtime_source(ether_get_hw_time, ndev);
 #endif
+#ifndef OSI_STRIPPED_LIB
 		ether_config_slot_function(pdata, OSI_ENABLE);
+#endif /* !OSI_STRIPPED_LIB */
 	}
 
 	return (copy_to_user(ifr->ifr_data, &config,
@@ -668,11 +674,7 @@ int ether_handle_priv_ts_ioctl(struct ether_priv_data *pdata,
 
 	raw_spin_unlock_irqrestore(&ether_ts_lock, flags);
 
-#if KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
-	dev_dbg(pdata->dev, "tv_sec = %ld, tv_nsec = %ld\n",
-#else
 	dev_dbg(pdata->dev, "tv_sec = %lld, tv_nsec = %ld\n",
-#endif
 		req.hw_ptp_ts.tv_sec, req.hw_ptp_ts.tv_nsec);
 
 	if (copy_to_user(ifr->ifr_data, &req, sizeof(req))) {

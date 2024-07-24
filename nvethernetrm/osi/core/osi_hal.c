@@ -934,8 +934,10 @@ static nve32_t configure_l3l4_filter_helper(struct osi_core_priv_data *const osi
 		OSI_CORE_INFO((osi_core->osd), (OSI_LOG_ARG_OUTOFBOUND),
 			("L3L4: ADD: "), (filter_no));
 
+#if !defined(L3L4_WILDCARD_FILTER)
 		/* update filter mask bit */
 		osi_core->l3l4_filter_bitmask |= ((nveu32_t)1U << (filter_no & 0x1FU));
+#endif /* !L3L4_WILDCARD_FILTER */
 	} else {
 		/* Clear the filter data.
 		 * osi_memset is an internal function and it cannot fail, hence
@@ -945,10 +947,13 @@ static nve32_t configure_l3l4_filter_helper(struct osi_core_priv_data *const osi
 		OSI_CORE_INFO((osi_core->osd), (OSI_LOG_ARG_OUTOFBOUND),
 			("L3L4: DELETE: "), (filter_no));
 
+#if !defined(L3L4_WILDCARD_FILTER)
 		/* update filter mask bit */
 		osi_core->l3l4_filter_bitmask &= ~((nveu32_t)1U << (filter_no & 0x1FU));
+#endif /* !L3L4_WILDCARD_FILTER */
 	}
 
+#if !defined(L3L4_WILDCARD_FILTER)
 	if (osi_core->l3l4_filter_bitmask != 0U) {
 		/* enable l3l4 filter */
 		ret = hw_config_l3_l4_filter_enable(osi_core, OSI_ENABLE);
@@ -956,6 +961,7 @@ static nve32_t configure_l3l4_filter_helper(struct osi_core_priv_data *const osi
 		/* disable l3l4 filter */
 		ret = hw_config_l3_l4_filter_enable(osi_core, OSI_DISABLE);
 	}
+#endif /* !L3L4_WILDCARD_FILTER */
 
 exit_func:
 
@@ -1844,13 +1850,15 @@ done:
  * @param[in] sec_osi_core: OSI core data structure for seconday interface.
  * @param[out] primary_time: primary interface time pointer
  * @param[out] secondary_time: Secondary interface time pointer
+ * @param[out] return_error: return error value pointer
  *
  * @retval calculated drift value
  */
-static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_core,
+static inline nvel64_t drift_calculation(struct osi_core_priv_data *const osi_core,
 					 struct osi_core_priv_data *const sec_osi_core,
 					 nvel64_t *primary_time,
-					 nvel64_t *secondary_time)
+					 nvel64_t *secondary_time,
+					 nve32_t *return_error)
 {
 	nve32_t ret;
 	nveu32_t sec = 0x0;
@@ -1868,6 +1876,10 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 	if (ret != 0) {
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 			     "CORE: TSC PTP capture failed for primary\n", 0ULL);
+#ifdef HSI_SUPPORT
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TSC_READ_ERR;
+#endif
 		goto fail;
 	}
 
@@ -1875,6 +1887,10 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 	if (ret != 0) {
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 			     "CORE: TSC PTP capture failed for secondary\n", 0ULL);
+#ifdef HSI_SUPPORT
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TSC_READ_ERR;
+#endif
 		goto fail;
 	}
 
@@ -1887,6 +1903,11 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 	} else {
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 			     "CORE: Negative primary PTP time\n", 0ULL);
+#ifdef HSI_SUPPORT
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TIME_CAL_ERR;
+#endif
+		ret = -1;
 		goto fail;
 	}
 
@@ -1902,6 +1923,11 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 	} else {
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 			     "CORE: Negative secondary PTP time\n", 0ULL);
+#ifdef HSI_SUPPORT
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TIME_CAL_ERR;
+#endif
+		ret = -1;
 		goto fail;
 	}
 
@@ -1912,6 +1938,11 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 		} else {
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: sec time crossing limit\n", 0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TIME_CAL_ERR;
+#endif
+			ret = -1;
 			goto fail;
 		}
 	} else if (time1 >= time2) {
@@ -1921,11 +1952,17 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 		} else {
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: sec time crossing limit\n", 0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TIME_CAL_ERR;
+#endif
+			ret = -1;
 			goto fail;
 		}
 	} else {
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 			     "CORE: wrong drift\n", 0ULL);
+		ret = -1;
 		goto fail;
 	}
 	/* 0 is lowest possible valid time value which represent
@@ -1936,10 +1973,16 @@ static inline nvel64_t dirft_calculation(struct osi_core_priv_data *const osi_co
 	} else {
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 			     "CORE: negative time\n", 0ULL);
+#ifdef HSI_SUPPORT
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_TIME_CAL_ERR;
+#endif
+		ret = -1;
 		goto fail;
 	}
 
 fail:
+	*return_error = ret;
 	return val;
 }
 
@@ -2594,6 +2637,11 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 		if (ret < 0) {
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: adjust freq failed\n", 0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] =
+						OSI_M2M_ADJ_FREQ_ERR;
+#endif
 			break;
 		}
 
@@ -2611,9 +2659,15 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 		}
 
 		if (l_core->ether_m2m_role == OSI_PTP_M2M_PRIMARY) {
-			drift_value = dirft_calculation(osi_core, sec_osi_core,
+			drift_value = drift_calculation(osi_core, sec_osi_core,
 							&primary_time,
-							&secondary_time);
+							&secondary_time,
+							&ret);
+
+			if (ret != 0) {
+				ret = 0;
+				break;
+			}
 
 			secondary_osi_lcore->serv.const_i = I_COMPONENT_BY_10;
 			secondary_osi_lcore->serv.const_p = P_COMPONENT_BY_10;
@@ -2628,6 +2682,11 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 					OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 						     "CORE: adjust_time failed\n",
 						     0ULL);
+#ifdef HSI_SUPPORT
+					osi_core->hsi.report_err = OSI_ENABLE;
+					osi_core->hsi.err_code[MAC2MAC_ERR_IDX] =
+								 OSI_M2M_ADJ_TIME_ERR;
+#endif
 				} else {
 					ret = osi_adjust_freq(sec_osi_core, 0);
 				}
@@ -2641,6 +2700,10 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: adjust_freq for sec_controller failed\n",
 				     0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_ADJ_FREQ_ERR;
+#endif
 			ret = 0;
 		}
 
@@ -2652,6 +2715,10 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 		if (ret < 0) {
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: adjust_time failed\n", 0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_ADJ_TIME_ERR;
+#endif
 			break;
 		}
 
@@ -2670,9 +2737,16 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 
 		if (l_core->ether_m2m_role == OSI_PTP_M2M_PRIMARY) {
 			drift_value = 0x0;
-			drift_value = dirft_calculation(osi_core, sec_osi_core,
+			drift_value = drift_calculation(osi_core, sec_osi_core,
 							&primary_time,
-							&secondary_time);
+							&secondary_time,
+							&ret);
+
+			if (ret != 0) {
+				ret = 0;
+				break;
+			}
+
 			ret = osi_adjust_time(sec_osi_core, drift_value);
 			if (ret == 0) {
 				secondary_osi_lcore->serv.count = SERVO_STATS_0;
@@ -2686,6 +2760,10 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: adjust_time for sec_controller failed\n",
 				     0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_ADJ_TIME_ERR;
+#endif
 			ret = 0;
 		}
 
@@ -2701,6 +2779,10 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 		if (ret < 0) {
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: configure_ptp failed\n", 0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_CONFIG_PTP_ERR;
+#endif
 			break;
 		}
 
@@ -2728,6 +2810,11 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 
 	case OSI_CMD_GET_HW_FEAT:
 		ret = ops_p->get_hw_features(osi_core, &data->hw_feat);
+		if (ret >= 0) {
+			/* Get MAC version */
+			ret = osi_get_mac_version(osi_core, &data->arg1_u32);
+		}
+
 		break;
 
 	case OSI_CMD_SET_SYSTOHW_TIME:
@@ -2736,6 +2823,10 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 		if (ret < 0) {
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: set systohw time failed\n", 0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_SET_TIME_ERR;
+#endif
 			break;
 		}
 
@@ -2769,6 +2860,10 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 			OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_INVALID,
 				     "CORE: set_time for sec_controller failed\n",
 				     0ULL);
+#ifdef HSI_SUPPORT
+			osi_core->hsi.report_err = OSI_ENABLE;
+			osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = OSI_M2M_SET_TIME_ERR;
+#endif
 			ret = 0;
 		}
 
@@ -2876,7 +2971,11 @@ static nve32_t osi_hal_handle_ioctl(struct osi_core_priv_data *osi_core,
 	case OSI_CMD_HSI_INJECT_ERR:
 		ret = ops_p->core_hsi_inject_err(osi_core, data->arg1_u32);
 		break;
-#endif
+	case OSI_CMD_READ_HSI_ERR:
+		hsi_read_err(osi_core);
+		ret = 0;
+		break;
+#endif /* HSI_SUPPORT */
 
 #ifdef OSI_DEBUG
 	case OSI_CMD_DEBUG_INTR_CONFIG:

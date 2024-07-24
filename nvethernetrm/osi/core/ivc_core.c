@@ -371,31 +371,6 @@ done:
 	return ret;
 }
 
-/**
- * @brief ivc_macsec_enable - Enable or disable Macsec.
- *
- * @param[in] osi_core: OSI Core private data structure.
- * @param[in] enable: Enable or Disable Macsec.
- *
- * @retval 0 on Success
- * @retval -1 on Failure
- */
-static nve32_t ivc_macsec_enable(struct osi_core_priv_data *const osi_core,
-			     nveu32_t enable)
-{
-	ivc_msg_common_t msg;
-	nveu32_t index = 0;
-
-	osi_memset(&msg, 0, sizeof(msg));
-
-	msg.cmd = en_macsec;
-	msg.args.arguments[index] = enable;
-	index++;
-	msg.args.count = index;
-
-	return osi_core->osd_ops.ivc_send(osi_core, &msg, sizeof(msg));
-}
-
 #ifdef DEBUG_MACSEC
 /**
  * @brief ivc_macsec_loopback_config - Loopback configure.
@@ -559,7 +534,7 @@ static nve32_t ivc_macsec_deinit(struct osi_core_priv_data *const osi_core)
  * @retval -1 on Failure
  */
 static nve32_t ivc_macsec_init(struct osi_core_priv_data *const osi_core,
-			   nveu32_t mtu)
+			   nveu32_t mtu, nveu8_t *const mac_addr)
 {
 	ivc_msg_common_t msg;
 	nveu32_t index = 0;
@@ -570,6 +545,9 @@ static nve32_t ivc_macsec_init(struct osi_core_priv_data *const osi_core,
 	msg.args.arguments[index] = mtu;
 	index++;
 	msg.args.count = index;
+	(void)osi_memcpy((void *) &msg.data.macsec_mac_addr,
+			 (void *)mac_addr,
+			 OSI_ETH_ALEN);
 
 	return osi_core->osd_ops.ivc_send(osi_core, &msg, sizeof(msg));
 }
@@ -595,7 +573,6 @@ void ivc_init_macsec_ops(void *macsecops)
 	ops->kt_config = ivc_macsec_kt_config;
 #endif /* MACSEC_KEY_PROGRAM */
 	ops->cipher_config = ivc_macsec_cipher_config;
-	ops->macsec_en = ivc_macsec_enable;
 	ops->config = ivc_macsec_config;
 	ops->read_mmc = ivc_macsec_read_mmc;
 #ifdef DEBUG_MACSEC

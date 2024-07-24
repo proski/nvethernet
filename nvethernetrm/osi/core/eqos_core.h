@@ -260,11 +260,9 @@
 #endif /* !OSI_STRIPPED_LIB */
 #define EQOS_MAC_PCS			0x00F8
 
-#ifdef UPDATED_PAD_CAL
 #define EQOS_MAC_DEBUG			0x0114
 #define EQOS_MAC_DEBUG_RPESTS		OSI_BIT(0)
 #define EQOS_MAC_DEBUG_TPESTS			OSI_BIT(16)
-#endif
 
 #define EQOS_MAC_MDIO_ADDRESS		0x0200
 #define EQOS_MAC_MDIO_DATA		0x0204
@@ -568,10 +566,8 @@
 /* MACSEC Recommended value*/
 #define EQOS_MTL_EST_CTOV_MACSEC_RECOMMEND	758U
 #endif /*  MACSEC_SUPPORT */
-#ifdef UPDATED_PAD_CAL
 /* EQOS RGMII Rx padctrl registers E_INPUT bit */
 #define EQOS_PADCTL_EQOS_E_INPUT		OSI_BIT(6)
-#endif
 /** @} */
 
 void update_ehfc_rfa_rfd(nveu32_t rx_fifo, nveu32_t *value);

@@ -1,18 +1,5 @@
-/*
- * Copyright (c) 2019-2023, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2019-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
 
 #include "ether_linux.h"
 #include "macsec.h"
@@ -21,6 +8,7 @@
 #include <linux/tegra-hsierrrptinj.h>
 #endif
 
+#ifndef OSI_STRIPPED_LIB
 #ifdef CONFIG_DEBUG_FS
 /* As per IAS Docs */
 #define EOQS_MAX_REGISTER_ADDRESS 0x12FC
@@ -239,11 +227,7 @@ static ssize_t macsec_enable_show(struct device *dev,
 	struct macsec_priv_data *macsec_pdata = pdata->macsec_pdata;
 	unsigned int enabled = macsec_pdata->enabled;
 	return scnprintf(buf, PAGE_SIZE, "%s\n",
-			 (enabled == (OSI_MACSEC_TX_EN | OSI_MACSEC_RX_EN))
-				      ? "txrx" :
-			 (enabled == OSI_MACSEC_TX_EN) ? "tx" :
-			 (enabled == OSI_MACSEC_RX_EN) ? "rx" :
-			 "None");
+			 (enabled == OSI_ENABLE) ? "txrx" : "None");
 }
 
 extern int macsec_open(struct macsec_priv_data *macsec_pdata,
@@ -463,147 +447,6 @@ static DEVICE_ATTR(macsec_loopback, (S_IRUGO | S_IWUSR),
 		   macsec_loopback_show,
 		   macsec_loopback_store);
 #endif /* DEBUG_MACSEC */
-
-#ifdef HSI_SUPPORT
-#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
-static int hsi_inject_err_fsi(unsigned int inst_id,
-			      struct epl_error_report_frame error_report,
-			      void *data)
-{
-	struct ether_priv_data *pdata = (struct ether_priv_data *)data;
-	struct osi_core_priv_data *osi_core = pdata->osi_core;
-	struct osi_ioctl ioctl_data = {};
-	int ret;
-
-	ioctl_data.cmd = OSI_CMD_HSI_INJECT_ERR;
-	ioctl_data.arg1_u32 = error_report.error_code;
-	ret = osi_handle_ioctl(osi_core, &ioctl_data);
-	if (ret < 0)
-		dev_err(pdata->dev, "Fail to inject error\n");
-
-	return ret;
-}
-#endif
-
-/**
- * @brief Shows HSI feature enabled status
- *
- * Algorithm: Shows HSI feature enabled status
- *
- * @param[in] dev: Device data.
- * @param[in] attr: Device attribute
- * @param[in] buf: Buffer to store the current status
- */
-static ssize_t hsi_enable_show(struct device *dev,
-			       struct device_attribute *attr, char *buf)
-{
-	struct net_device *ndev = (struct net_device *)dev_get_drvdata(dev);
-	struct ether_priv_data *pdata = netdev_priv(ndev);
-	struct osi_core_priv_data *osi_core = pdata->osi_core;
-
-	if (osi_core->use_virtualization == OSI_ENABLE) {
-		dev_err(pdata->dev, "Not supported with Ethernet virtualization enabled\n");
-		return 0;
-	}
-
-	return scnprintf(buf, PAGE_SIZE, "%s\n",
-			 (osi_core->hsi.enabled == OSI_ENABLE) ?
-			 "enabled" : "disabled");
-}
-
-/**
- * @brief Set HSI enabled status
- *
- * Algorithm: This is used to set HSI feature enable status
- *
- * @param[in] dev: Device data.
- * @param[in] attr: Device attribute
- * @param[in] buf: Buffer which contains the user input
- * @param[in] size: size of buffer
- *
- * @return size of buffer.
- */
-static ssize_t hsi_enable_store(struct device *dev,
-				struct device_attribute *attr,
-				const char *buf, size_t size)
-{
-	struct net_device *ndev = (struct net_device *)dev_get_drvdata(dev);
-	struct ether_priv_data *pdata = netdev_priv(ndev);
-	struct osi_core_priv_data *osi_core = pdata->osi_core;
-	struct osi_ioctl ioctl_data = {};
-	int ret = 0;
-#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
-	u32 inst_id = osi_core->instance_id;
-	u32 ip_type[2] = {IP_EQOS, IP_MGBE};
-#endif
-	if (osi_core->use_virtualization == OSI_ENABLE) {
-		dev_err(pdata->dev, "Not supported with Ethernet virtualization enabled\n");
-		return size;
-	}
-
-	if (!netif_running(ndev)) {
-		dev_err(pdata->dev, "Not Allowed. Ether interface is not up\n");
-		return size;
-	}
-
-	ioctl_data.cmd = OSI_CMD_HSI_CONFIGURE;
-	if (strncmp(buf, "enable", 6) == OSI_NONE) {
-		ioctl_data.arg1_u32 = OSI_ENABLE;
-		ret = osi_handle_ioctl(pdata->osi_core, &ioctl_data);
-		if (ret < 0) {
-			dev_err(pdata->dev,
-				"Failed to enable HSI\n");
-		} else {
-			osi_core->hsi.enabled = OSI_ENABLE;
-			dev_info(pdata->dev, "HSI Enabled\n");
-#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
-			if (osi_core->instance_id == OSI_INSTANCE_ID_EQOS)
-				inst_id = 0;
-
-			ret = hsierrrpt_reg_cb(ip_type[osi_core->mac], inst_id,
-					       hsi_inject_err_fsi, pdata);
-			if (ret != 0) {
-				dev_err(pdata->dev, "Err inj callback registration failed: %d",
-					ret);
-			}
-#endif
-		}
-	} else if (strncmp(buf, "disable", 7) == OSI_NONE) {
-		ioctl_data.arg1_u32 = OSI_DISABLE;
-		ret = osi_handle_ioctl(pdata->osi_core, &ioctl_data);
-		if (ret < 0) {
-			dev_err(pdata->dev,
-				"Failed to disable HSI\n");
-		} else {
-			osi_core->hsi.enabled = OSI_DISABLE;
-			dev_info(pdata->dev, "HSI Disabled\n");
-#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
-			if (osi_core->instance_id == OSI_INSTANCE_ID_EQOS)
-				inst_id = 0;
-
-			ret = hsierrrpt_dereg_cb(ip_type[osi_core->mac], inst_id);
-			if (ret != 0) {
-				dev_err(pdata->dev, "Err inj callback deregistration failed: %d",
-					ret);
-			}
-#endif
-		}
-	} else {
-		dev_err(pdata->dev,
-			"Invalid entry. Valid Entries are enable/disable\n");
-	}
-
-	return size;
-}
-
-/**
- * @brief Sysfs attribute for HSI enable
- *
- */
-static DEVICE_ATTR(hsi_enable, 0644,
-		   hsi_enable_show,
-		   hsi_enable_store);
-#endif
 
 #define MAC_ADDR_FMT	"%02x:%02x:%02x:%02x:%02x:%02x"
 #define ETHTYPE_FMT	"%02x%02x"
@@ -2700,10 +2543,154 @@ static DEVICE_ATTR(nvgro_dump, 0644,
 		   ether_nvgro_dump_show, NULL);
 #endif
 
+#ifdef HSI_SUPPORT
+#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
+static int hsi_inject_err_fsi(unsigned int inst_id,
+			      struct epl_error_report_frame error_report,
+			      void *data)
+{
+	struct ether_priv_data *pdata = (struct ether_priv_data *)data;
+	struct osi_core_priv_data *osi_core = pdata->osi_core;
+	struct osi_ioctl ioctl_data = {};
+	int ret;
+
+	ioctl_data.cmd = OSI_CMD_HSI_INJECT_ERR;
+	ioctl_data.arg1_u32 = error_report.error_code;
+	ret = osi_handle_ioctl(osi_core, &ioctl_data);
+	if (ret < 0)
+		dev_err(pdata->dev, "Fail to inject error\n");
+
+	return ret;
+}
+#endif
+
+/**
+ * @brief Shows HSI feature enabled status
+ *
+ * Algorithm: Shows HSI feature enabled status
+ *
+ * @param[in] dev: Device data.
+ * @param[in] attr: Device attribute
+ * @param[in] buf: Buffer to store the current status
+ */
+static ssize_t hsi_enable_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct net_device *ndev = (struct net_device *)dev_get_drvdata(dev);
+	struct ether_priv_data *pdata = netdev_priv(ndev);
+	struct osi_core_priv_data *osi_core = pdata->osi_core;
+
+	if (osi_core->use_virtualization == OSI_ENABLE) {
+		dev_err(pdata->dev, "Not supported with Ethernet virtualization enabled\n");
+		return 0;
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 (osi_core->hsi.enabled == OSI_ENABLE) ?
+			 "enabled" : "disabled");
+}
+
+/**
+ * @brief Set HSI enabled status
+ *
+ * Algorithm: This is used to set HSI feature enable status
+ *
+ * @param[in] dev: Device data.
+ * @param[in] attr: Device attribute
+ * @param[in] buf: Buffer which contains the user input
+ * @param[in] size: size of buffer
+ *
+ * @return size of buffer.
+ */
+static ssize_t hsi_enable_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t size)
+{
+	struct net_device *ndev = (struct net_device *)dev_get_drvdata(dev);
+	struct ether_priv_data *pdata = netdev_priv(ndev);
+	struct osi_core_priv_data *osi_core = pdata->osi_core;
+	struct osi_ioctl ioctl_data = {};
+	int ret = 0;
+#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
+	u32 inst_id = osi_core->instance_id;
+	u32 ip_type[2] = {IP_EQOS, IP_MGBE};
+#endif
+
+	if (osi_core->use_virtualization == OSI_ENABLE) {
+		dev_err(pdata->dev, "Not supported with Ethernet virtualization enabled\n");
+		return size;
+	}
+
+	if (!netif_running(ndev)) {
+		dev_err(pdata->dev, "Not Allowed. Ether interface is not up\n");
+		return size;
+	}
+
+	ioctl_data.cmd = OSI_CMD_HSI_CONFIGURE;
+	if (strncmp(buf, "enable", 6) == OSI_NONE) {
+		ioctl_data.arg1_u32 = OSI_ENABLE;
+		ret = osi_handle_ioctl(pdata->osi_core, &ioctl_data);
+		if (ret < 0) {
+			dev_err(pdata->dev,
+				"Failed to enable HSI\n");
+		} else {
+			osi_core->hsi.enabled = OSI_ENABLE;
+			dev_info(pdata->dev, "HSI Enabled\n");
+#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
+			if (osi_core->instance_id == OSI_INSTANCE_ID_EQOS)
+				inst_id = 0;
+
+			ret = hsierrrpt_reg_cb(ip_type[osi_core->mac], inst_id,
+					       hsi_inject_err_fsi, pdata);
+			if (ret != 0) {
+				dev_err(pdata->dev, "Err inj callback registration failed: %d",
+					ret);
+			}
+#endif
+		}
+	} else if (strncmp(buf, "disable", 7) == OSI_NONE) {
+		ioctl_data.arg1_u32 = OSI_DISABLE;
+		ret = osi_handle_ioctl(pdata->osi_core, &ioctl_data);
+		if (ret < 0) {
+			dev_err(pdata->dev,
+				"Failed to disable HSI\n");
+		} else {
+			osi_core->hsi.enabled = OSI_DISABLE;
+			dev_info(pdata->dev, "HSI Disabled\n");
+#if (IS_ENABLED(CONFIG_TEGRA_HSIERRRPTINJ))
+			if (osi_core->instance_id == OSI_INSTANCE_ID_EQOS)
+				inst_id = 0;
+
+			ret = hsierrrpt_dereg_cb(ip_type[osi_core->mac], inst_id);
+			if (ret != 0) {
+				dev_err(pdata->dev, "Err inj callback deregistration failed: %d",
+					ret);
+			}
+#endif
+		}
+	} else {
+		dev_err(pdata->dev,
+			"Invalid entry. Valid Entries are enable/disable\n");
+	}
+
+	return size;
+}
+
+/**
+ * @brief Sysfs attribute for HSI enable
+ *
+ */
+static DEVICE_ATTR(hsi_enable, 0644,
+		   hsi_enable_show,
+		   hsi_enable_store);
+#endif
+#endif /* OSI_STRIPPED_LIB */
+
 /**
  * @brief Attributes for nvethernet sysfs
  */
 static struct attribute *ether_sysfs_attrs[] = {
+#ifndef OSI_STRIPPED_LIB
 #ifdef OSI_DEBUG
 	&dev_attr_desc_dump_enable.attr,
 #endif /* OSI_DEBUG */
@@ -2744,6 +2731,7 @@ static struct attribute *ether_sysfs_attrs[] = {
 #ifdef HSI_SUPPORT
 	&dev_attr_hsi_enable.attr,
 #endif
+#endif /* OSI_STRIPPED_LIB */
 	NULL
 };
 
@@ -2755,6 +2743,7 @@ static struct attribute_group ether_attribute_group = {
 	.attrs = ether_sysfs_attrs,
 };
 
+#ifndef OSI_STRIPPED_LIB
 #ifdef CONFIG_DEBUG_FS
 static char *timestamp_system_source(unsigned int source)
 {
@@ -3324,31 +3313,35 @@ static void ether_remove_debugfs(struct ether_priv_data *pdata)
 	debugfs_remove_recursive(pdata->dbgfs_dir);
 }
 #endif /* CONFIG_DEBUG_FS */
+#endif /* OSI_STRIPPED_LIB */
 
 int ether_sysfs_register(struct ether_priv_data *pdata)
 {
 	struct device *dev = pdata->dev;
+#ifndef OSI_STRIPPED_LIB
+#ifdef CONFIG_DEBUG_FS
 	int ret = 0;
 
-#ifdef CONFIG_DEBUG_FS
-	/* Intentionally ignored the return value of debugfs
-	 * and continues to initialize the driver even it fails
-	 * to support Linux Production profile
-	 */
-	ether_create_debugfs(pdata);
+	if (debugfs_initialized()) {
+		ret = ether_create_debugfs(pdata);
+		if (ret < 0)
+			return ret;
+	}
 #endif
+#endif /* OSI_STRIPPED_LIB */
 
 	/* Create nvethernet sysfs group under /sys/devices/<ether_device>/ */
-	ret = sysfs_create_group(&dev->kobj, &ether_attribute_group);
-	return ret;
+	return sysfs_create_group(&dev->kobj, &ether_attribute_group);
 }
 
 void ether_sysfs_unregister(struct ether_priv_data *pdata)
 {
 	struct device *dev = pdata->dev;
+#ifndef OSI_STRIPPED_LIB
 #ifdef CONFIG_DEBUG_FS
 	ether_remove_debugfs(pdata);
 #endif
+#endif /* OSI_STRIPPED_LIB */
 	/* Remove nvethernet sysfs group under /sys/devices/<ether_device>/ */
 	sysfs_remove_group(&dev->kobj, &ether_attribute_group);
 }

@@ -846,7 +846,6 @@ static inline void fill_first_desc(OSI_UNUSED struct osi_tx_ring *tx_ring,
 	/* if TS is set enable timestamping */
 	if ((tx_pkt_cx->flags & OSI_PKT_CX_PTP) == OSI_PKT_CX_PTP) {
 		tx_desc->tdes2 |= TDES2_TTSE;
-		tx_swcx->flags |= OSI_PKT_CX_PTP;
 		//ptp master mode in one step sync
 		if (is_ptp_onestep_and_master_mode(ptp_flag) ==
 		    OSI_ENABLE) {
@@ -986,6 +985,7 @@ nve32_t hw_transmit(struct osi_dma_priv_data *osi_dma,
 	struct osi_tx_pkt_cx *tx_pkt_cx = OSI_NULL;
 	struct osi_tx_desc *first_desc = OSI_NULL;
 	struct osi_tx_desc *last_desc = OSI_NULL;
+	struct osi_tx_swcx *last_swcx = OSI_NULL;
 	struct osi_tx_desc *tx_desc = OSI_NULL;
 	struct osi_tx_swcx *tx_swcx = OSI_NULL;
 	struct osi_tx_desc *cx_desc = OSI_NULL;
@@ -1076,18 +1076,12 @@ nve32_t hw_transmit(struct osi_dma_priv_data *osi_dma,
 
 	/* Fill first descriptor */
 	fill_first_desc(tx_ring, tx_pkt_cx, tx_desc, tx_swcx, osi_dma->ptp_flag);
-	if (((tx_pkt_cx->flags & OSI_PKT_CX_PTP) == OSI_PKT_CX_PTP) &&
-	    (osi_dma->mac == OSI_MAC_HW_MGBE)) {
-		/* save packet id for first desc, time stamp will be with
-		 * first FD only
-		 */
-		tx_swcx->pktid = pkt_id;
-	}
 
 	INCR_TX_DESC_INDEX(entry, osi_dma->tx_ring_sz);
 
 	first_desc = tx_desc;
 	last_desc = tx_desc;
+	last_swcx = tx_swcx;
 	tx_desc = tx_ring->tx_desc + entry;
 	tx_swcx = tx_ring->tx_swcx + entry;
 	desc_cnt--;
@@ -1102,12 +1096,19 @@ nve32_t hw_transmit(struct osi_dma_priv_data *osi_dma,
 
 		INCR_TX_DESC_INDEX(entry, osi_dma->tx_ring_sz);
 		last_desc = tx_desc;
+		last_swcx = tx_swcx;
 		tx_desc = tx_ring->tx_desc + entry;
 		tx_swcx = tx_ring->tx_swcx + entry;
 	}
 
 	/* Mark it as LAST descriptor */
 	last_desc->tdes3 |= TDES3_LD;
+	if (((tx_pkt_cx->flags & OSI_PKT_CX_PTP) == OSI_PKT_CX_PTP) &&
+	    (osi_dma->mac == OSI_MAC_HW_MGBE)) {
+		last_swcx->flags |= OSI_PKT_CX_PTP;
+		last_swcx->pktid = pkt_id;
+	}
+
 	/* set Interrupt on Completion*/
 	last_desc->tdes2 |= TDES2_IOC;
 

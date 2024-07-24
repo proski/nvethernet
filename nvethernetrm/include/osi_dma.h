@@ -1222,6 +1222,7 @@ nve32_t osi_config_slot_function(struct osi_dma_priv_data *osi_dma,
  * @retval -1 on failure.
  */
 nve32_t osi_clear_rx_pkt_err_stats(struct osi_dma_priv_data *osi_dma);
+#endif /* !OSI_STRIPPED_LIB */
 
 /**
  * @brief osi_txring_empty - Check if Txring is empty.
@@ -1246,7 +1247,6 @@ nve32_t osi_clear_rx_pkt_err_stats(struct osi_dma_priv_data *osi_dma);
  * @retval 0 if ring has outstanding packets.
  */
 nve32_t osi_txring_empty(struct osi_dma_priv_data *osi_dma, nveu32_t chan);
-#endif /* !OSI_STRIPPED_LIB */
 
 /**
  * @brief osi_get_dma - Get pointer to osi_dma data structure.

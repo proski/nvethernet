@@ -1832,7 +1832,9 @@ static nve32_t mgbe_configure_mac(struct osi_core_priv_data *osi_core)
 #ifndef OSI_STRIPPED_LIB
 	value |= (MGBE_IMR_TXESIE);
 #endif
-	value |= (MGBE_IMR_RGSMIIIE | MGBE_IMR_TSIE);
+	/* Clear link status interrupt and enable after lane bring up done */
+	value &= ~MGBE_IMR_RGSMIIIE;
+	value |= MGBE_IMR_TSIE;
 	osi_writela(osi_core, value, (nveu8_t *)osi_core->base + MGBE_MAC_IER);
 
 	/* Enable common interrupt at wrapper level */
@@ -2082,6 +2084,11 @@ static nve32_t mgbe_core_init(struct osi_core_priv_data *const osi_core)
 		hw_tsn_init(osi_core, osi_core->hw_feature->est_sel,
 			    osi_core->hw_feature->fpe_sel);
 	}
+
+#if !defined(L3L4_WILDCARD_FILTER)
+	/* initialize L3L4 Filters variable */
+	osi_core->l3l4_filter_bitmask = OSI_NONE;
+#endif /* !L3L4_WILDCARD_FILTER */
 
 	ret = mgbe_dma_chan_to_vmirq_map(osi_core);
 fail:

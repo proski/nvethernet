@@ -83,7 +83,6 @@
 #define MACSEC_RX_PKTS_NOTVALID_SCx_LO_0(x)	((0x9160UL) + ((x) * 8UL))
 #define MACSEC_RX_PKTS_OK_SCx_LO_0(x)		((0x91E0UL) + ((x) * 8UL))
 
-
 #define MACSEC_CONTROL0 		0xD000
 #define MACSEC_LUT_CONFIG		0xD004
 #define MACSEC_LUT_DATA(x)		((0xD008U) + ((x) * 4U))

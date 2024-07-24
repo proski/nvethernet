@@ -1,19 +1,7 @@
-/*
- * Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2019-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
 
+#ifndef OSI_STRIPPED_LIB
 #include "ether_linux.h"
 #include <net/udp.h>
 
@@ -22,7 +10,11 @@
  */
 struct ether_packet_ctxt {
 	/** Destination MAC address in Ethernet header */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
+	const unsigned char *dst;
+#else
 	unsigned char *dst;
+#endif
 };
 
 /**
@@ -162,7 +154,11 @@ static int ether_test_loopback_validate(struct sk_buff *skb,
 					struct net_device *orig_ndev)
 {
 	struct ether_test_priv_data *tpdata = pt->af_packet_priv;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
+	const unsigned char *dst = tpdata->ctxt->dst;
+#else
 	unsigned char *dst = tpdata->ctxt->dst;
+#endif
 	struct ether_testhdr *thdr;
 	struct ethhdr *ehdr;
 	struct udphdr *uhdr;
@@ -414,6 +410,7 @@ void ether_selftest_run(struct net_device *dev,
 			if (!ret)
 				break;
 		/* Fallthrough */
+			fallthrough;
 		case ETHER_LOOPBACK_MAC:
 			if (pdata->osi_core) {
 				ioctl_data.cmd = OSI_CMD_MAC_LB;
@@ -446,6 +443,7 @@ void ether_selftest_run(struct net_device *dev,
 			if (!ret)
 				break;
 		/* Fallthrough */
+			fallthrough;
 		case ETHER_LOOPBACK_MAC:
 			if (pdata->osi_core) {
 				ioctl_data.cmd = OSI_CMD_MAC_LB;
@@ -494,3 +492,4 @@ int ether_selftest_get_count(struct ether_priv_data *pdata)
 {
 	return ARRAY_SIZE(ether_selftests);
 }
+#endif /* OSI_STRIPPED_LIB */

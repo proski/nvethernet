@@ -193,6 +193,11 @@ nve32_t hw_set_speed(struct osi_core_priv_data *const osi_core, const nve32_t sp
 		if (ret < 0) {
 			goto fail;
 		}
+
+		value = osi_readla(osi_core, (nveu8_t *)osi_core->base + MGBE_MAC_IER);
+		/* Enable Link Status interrupt only after lane bring up success */
+		value |= MGBE_IMR_RGSMIIIE;
+		osi_writela(osi_core, value, (nveu8_t *)osi_core->base + MGBE_MAC_IER);
 	}
 fail:
 	return ret;
@@ -585,6 +590,7 @@ nve32_t hw_config_mac_pkt_filter_reg(struct osi_core_priv_data *const osi_core,
 	return ret;
 }
 
+#if !defined(L3L4_WILDCARD_FILTER)
 nve32_t hw_config_l3_l4_filter_enable(struct osi_core_priv_data *const osi_core,
 				      const nveu32_t filter_enb_dis)
 {
@@ -608,6 +614,7 @@ nve32_t hw_config_l3_l4_filter_enable(struct osi_core_priv_data *const osi_core,
 fail:
 	return ret;
 }
+#endif /* !L3L4_WILDCARD_FILTER */
 
 /**
  * @brief hw_est_read - indirect read the GCL to Software own list
@@ -1526,6 +1533,11 @@ nve32_t hsi_common_error_inject(struct osi_core_priv_data *osi_core,
 			    (nveu8_t *)osi_core->macsec_base +
 			    MACSEC_COMMON_ISR_SET);
 		break;
+	case OSI_PHY_WRITE_VERIFY_ERR:
+		osi_core->hsi.err_code[PHY_WRITE_VERIFY_FAIL_IDX] = OSI_PHY_WRITE_VERIFY_ERR;
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.report_count_err[PHY_WRITE_VERIFY_FAIL_IDX] = OSI_ENABLE;
+		break;
 	case OSI_TX_FRAME_ERR:
 		osi_core->hsi.report_count_err[TX_FRAME_ERR_IDX] = OSI_ENABLE;
 		osi_core->hsi.err_code[TX_FRAME_ERR_IDX] = OSI_TX_FRAME_ERR;
@@ -1541,6 +1553,15 @@ nve32_t hsi_common_error_inject(struct osi_core_priv_data *osi_core,
 		osi_core->hsi.report_err = OSI_ENABLE;
 		osi_core->hsi.report_count_err[XPCS_WRITE_FAIL_IDX] = OSI_ENABLE;
 		break;
+	case OSI_M2M_TSC_READ_ERR:
+	case OSI_M2M_TIME_CAL_ERR:
+	case OSI_M2M_ADJ_FREQ_ERR:
+	case OSI_M2M_ADJ_TIME_ERR:
+	case OSI_M2M_SET_TIME_ERR:
+	case OSI_M2M_CONFIG_PTP_ERR:
+		osi_core->hsi.report_err = OSI_ENABLE;
+		osi_core->hsi.err_code[MAC2MAC_ERR_IDX] = error_code;
+		break;
 	default:
 		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_HW_FAIL,
 			     "Invalid error code\n", (nveu32_t)error_code);
@@ -1550,7 +1571,87 @@ nve32_t hsi_common_error_inject(struct osi_core_priv_data *osi_core,
 
 	return ret;
 }
-#endif
+
+/**
+ * @brief hsi_update_mmc_val - function to read register and return value to callee
+ *
+ * Algorithm: Read the registers, check for boundary, if more, reset
+ *	  counters else return same to caller.
+ *
+ * @param[in] osi_core: OSI core private data structure.
+ * @param[in] last_value: previous value of stats variable.
+ * @param[in] offset: HW register offset
+ *
+ * @note
+ *	1) MAC should be init and started. see osi_start_mac()
+ *	2) osi_core->osd should be populated
+ *
+ * @retval 0 on MMC counters overflow
+ * @retval value on current MMC counter value.
+ */
+static inline nveu64_t hsi_update_mmc_val(struct osi_core_priv_data *osi_core,
+					  nveu64_t last_value,
+					  nveu64_t offset)
+{
+	nveu64_t temp = 0;
+	nveu32_t value = osi_readl((nveu8_t *)osi_core->base + offset);
+	const nveu32_t MMC_CNTRL[MAX_MAC_IP_TYPES] = { EQOS_MMC_CNTRL, MGBE_MMC_CNTRL };
+	const nveu32_t MMC_CNTRL_CNTRST[MAX_MAC_IP_TYPES] = { EQOS_MMC_CNTRL_CNTRST,
+						MGBE_MMC_CNTRL_CNTRST };
+
+	temp = last_value + value;
+	if (temp < last_value) {
+		OSI_CORE_ERR(osi_core->osd, OSI_LOG_ARG_OUTOFBOUND,
+			     "Value overflow resetting  all counters\n", (nveul64_t)offset);
+		value = osi_readl((nveu8_t *)osi_core->base + MMC_CNTRL[osi_core->mac]);
+		/* self-clear bit in one clock cycle */
+		value |= MMC_CNTRL_CNTRST[osi_core->mac];
+		osi_writel(value, (nveu8_t *)osi_core->base + MMC_CNTRL[osi_core->mac]);
+		osi_memset(&osi_core->mmc, 0U, sizeof(struct osi_mmc_counters));
+	}
+
+	return temp;
+}
+
+/**
+ * @brief hsi_read_err - To read MMC error registers and update
+ *         ether_mmc_counter structure variable
+ *
+ * Algorithm: Pass register offset and old value to helper function and
+ *	   update structure.
+ *
+ * @param[in] osi_core: OSI core private data structure.
+ *
+ * @note
+ *	1) MAC should be init and started. see osi_start_mac()
+ *	2) osi_core->osd should be populated
+ */
+void hsi_read_err(struct osi_core_priv_data *const osi_core)
+{
+	struct osi_mmc_counters *mmc = &osi_core->mmc;
+	const nveu32_t RXCRCERROR[MAX_MAC_IP_TYPES] = { EQOS_MMC_RXCRCERROR,
+						MGBE_MMC_RXCRCERROR_L };
+	const nveu32_t RXIPV4_HDRERR_PKTS[MAX_MAC_IP_TYPES] = { EQOS_MMC_RXIPV4_HDRERR_PKTS,
+					MGBE_MMC_RXIPV4_HDRERR_PKTS_L };
+	const nveu32_t RXIPV6_HDRERR_PKTS[MAX_MAC_IP_TYPES] = { EQOS_MMC_RXIPV6_HDRERR_PKTS,
+					MGBE_MMC_RXIPV6_HDRERR_PKTS_L };
+	const nveu32_t RXUDP_ERR_PKTS[MAX_MAC_IP_TYPES] = { EQOS_MMC_RXUDP_ERR_PKTS,
+					MGBE_MMC_RXUDP_ERR_PKTS_L };
+	const nveu32_t RXTCP_ERR_PKTS[MAX_MAC_IP_TYPES] = { EQOS_MMC_RXTCP_ERR_PKTS,
+					MGBE_MMC_RXTCP_ERR_PKTS_L };
+
+	mmc->mmc_rx_crc_error = hsi_update_mmc_val(osi_core, mmc->mmc_rx_crc_error,
+						   RXCRCERROR[osi_core->mac]);
+	mmc->mmc_rx_ipv4_hderr = hsi_update_mmc_val(osi_core, mmc->mmc_rx_ipv4_hderr,
+						    RXIPV4_HDRERR_PKTS[osi_core->mac]);
+	mmc->mmc_rx_ipv6_hderr = hsi_update_mmc_val(osi_core, mmc->mmc_rx_ipv6_hderr,
+						    RXIPV6_HDRERR_PKTS[osi_core->mac]);
+	mmc->mmc_rx_udp_err = hsi_update_mmc_val(osi_core, mmc->mmc_rx_udp_err,
+						 RXUDP_ERR_PKTS[osi_core->mac]);
+	mmc->mmc_rx_tcp_err = hsi_update_mmc_val(osi_core, mmc->mmc_rx_tcp_err,
+						 RXTCP_ERR_PKTS[osi_core->mac]);
+}
+#endif /* HSI_SUPPORT */
 
 /**
  * @brief prepare_l3l4_ctr_reg - Prepare control register for L3L4 filters.

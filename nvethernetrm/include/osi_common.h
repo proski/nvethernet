@@ -86,7 +86,6 @@
  * @brief EQOS generic helper MACROS.
  * @{
  */
-#define OSI_PTP_REQ_CLK_FREQ		250000000U
 #define OSI_FLOW_CTRL_DISABLE		0U
 #define OSI_ADDRESS_32BIT		0
 #define OSI_ADDRESS_40BIT		1
@@ -140,6 +139,7 @@
 /** @} */
 #endif /* !OSI_STRIPPED_LIB */
 
+#define OSI_PTP_REQ_CLK_FREQ		250000000U
 #define OSI_POLL_COUNT			1000U
 #ifndef UINT_MAX
 #define UINT_MAX			(~0U)
@@ -176,11 +176,9 @@
 /* Default maximum Giant Packet Size Limit is 16K */
 #define OSI_MAX_MTU_SIZE	16383U
 
-#ifdef UPDATED_PAD_CAL
 /* MAC Tx/Rx Idle retry and delay count */
 #define OSI_TXRX_IDLE_RETRY	5000U
 #define OSI_DELAY_COUNT		10U
-#endif
 
 #define EQOS_DMA_CHX_STATUS(x)		((0x0080U * (x)) + 0x1160U)
 #define MGBE_DMA_CHX_STATUS(x)		((0x0080U * (x)) + 0x3160U)

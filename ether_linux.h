@@ -1,18 +1,5 @@
-/*
- * Copyright (c) 2018-2023, NVIDIA CORPORATION.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2019-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
 
 #ifndef ETHER_LINUX_H
 #define ETHER_LINUX_H
@@ -47,17 +34,16 @@
 #include <linux/version.h>
 #include <linux/list.h>
 #include <net/pkt_sched.h>
-#include <linux/tegra-ivc.h>
-#if (KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE)
-#include <soc/tegra/chip-id.h>
-#else
+#include <soc/tegra/virt/hv-ivc.h>
 #include <soc/tegra/fuse.h>
-#endif
 #if IS_ENABLED(CONFIG_PAGE_POOL)
-#if (KERNEL_VERSION(5, 10, 0) <= LINUX_VERSION_CODE)
+#if defined(NV_SPLIT_PAGE_POOL_HEADER)
+#include <net/page_pool/types.h>
+#include <net/page_pool/helpers.h>
+#else
 #include <net/page_pool.h>
-#define ETHER_PAGE_POOL
 #endif
+#define ETHER_PAGE_POOL
 #endif
 #include <osi_core.h>
 #include <osi_dma.h>
@@ -72,6 +58,11 @@
 #include <uapi/linux/ip.h>
 #include <net/udp.h>
 #endif /* ETHER_NVGRO */
+
+/**
+ * @brief Define for default DMA bit mask
+ */
+#define DMA_MASK_NONE 0x0ULL
 
 /**
  * @brief Constant for CBS value calculate
@@ -231,7 +222,26 @@
  */
 #define FIXED_PHY_INVALID_MDIO_ADDR	0xFFU
 
+#define ETHER_ADDRESS_32BIT		0
+#define ETHER_ADDRESS_40BIT		1
+#define ETHER_ADDRESS_48BIT		2
 
+/**
+ * @addtogroup coalesce defines
+ *
+ * @brief Used to configure coalesce.
+ * @{
+ */
+#define ETHER_MIN_TX_COALESCE_USEC	32U
+#define ETHER_MIN_TX_COALESCE_FRAMES	1U
+#define ETHER_MAX_TX_COALESCE_USEC	1020U
+#define ETHER_MIN_RX_COALESCE_FRAMES	1U
+#define ETHER_MAX_RX_COALESCE_USEC	1020U
+#define ETHER_EQOS_MIN_RX_COALESCE_USEC	5U
+#define ETHER_MGBE_MIN_RX_COALESCE_USEC	6U
+/** @} */
+
+#define ETHER_INVALID_CHAN_NUM		0xFFU
 /**
  * @brief Check if Tx data buffer length is within bounds.
  *
@@ -299,6 +309,9 @@ static inline int ether_avail_txdesc_cnt(struct osi_dma_priv_data *osi_dma,
 
 #define ETHER_VM_IRQ_TX_CHAN_MASK(x)	BIT((x) * 2U)
 #define ETHER_VM_IRQ_RX_CHAN_MASK(x)	BIT(((x) * 2U) + 1U)
+
+/* MDIO clause 45 bit */
+#define MII_DEVADDR_C45_SHIFT	16
 
 /**
  * @brief DMA Transmit Channel NAPI
@@ -377,6 +390,20 @@ struct ether_tx_ts_skb_list {
 };
 
 /**
+ * @brief skb list with timestamp node structure
+ */
+struct ether_timestamp_skb_list {
+	/** Link list node head */
+	struct list_head list_h;
+	/** skb pointer */
+	struct sk_buff *skb;
+	/* Nano sec tx timestamp for skbinfo*/
+	unsigned long long nsec;
+	/** if node is in use */
+	unsigned int in_use;
+};
+
+/**
  * @brief ether_xtra_stat_counters - OSI core extra stat counters
  */
 struct ether_xtra_stat_counters {
@@ -402,6 +429,10 @@ struct ether_priv_data {
 	struct osi_core_priv_data *osi_core;
 	/** OSI DMA private data */
 	struct osi_dma_priv_data *osi_dma;
+	/** Virtual address of reserved DMA buffer */
+	void *resv_buf_virt_addr;
+	/** Physical address of reserved DMA buffer */
+	nveu64_t resv_buf_phy_addr;
 	/** HW supported feature list */
 	struct osi_hw_features hw_feat;
 	/** Array of DMA Transmit channel NAPI */
@@ -565,8 +596,12 @@ struct ether_priv_data {
 	struct delayed_work tx_ts_work;
 	/** local skb list head */
 	struct list_head tx_ts_skb_head;
+	/** local skb list head with timestamp*/
+	struct list_head timestamp_skb_head;
 	/** pre allocated memory for ether_tx_ts_skb_list list */
 	struct ether_tx_ts_skb_list tx_ts_skb[ETHER_MAX_PENDING_SKB_CNT];
+	/** pre allocated memory for ether_timestamp_skb_list list */
+	struct ether_timestamp_skb_list timestamp_skb[ETHER_MAX_PENDING_SKB_CNT];
 	/** Atomic variable to hold the current pad calibration status */
 	atomic_t padcal_in_progress;
 	/** eqos dev pinctrl handle */
@@ -704,7 +739,9 @@ int ether_handle_hwtstamp_ioctl(struct ether_priv_data *pdata,
 				struct ifreq *ifr);
 int ether_handle_priv_ts_ioctl(struct ether_priv_data *pdata,
 			       struct ifreq *ifr);
+#ifndef OSI_STRIPPED_LIB
 int ether_conf_eee(struct ether_priv_data *pdata, unsigned int tx_lpi_enable);
+#endif /* !OSI_STRIPPED_LIB */
 
 /**
  * @brief ether_padctrl_mii_rx_pins - Enable/Disable RGMII Rx pins.
@@ -717,7 +754,7 @@ int ether_conf_eee(struct ether_priv_data *pdata, unsigned int tx_lpi_enable);
  */
 int ether_padctrl_mii_rx_pins(void *priv, unsigned int enable);
 
-#if IS_ENABLED(CONFIG_NVETHERNET_SELFTESTS)
+#ifndef OSI_STRIPPED_LIB
 void ether_selftest_run(struct net_device *dev,
 			struct ethtool_test *etest, u64 *buf);
 void ether_selftest_get_strings(struct ether_priv_data *pdata, u8 *data);
@@ -769,7 +806,6 @@ int osd_ivc_send_cmd(void *priv, ivc_msg_common_t *ivc_buf,
 
 void ether_set_rx_mode(struct net_device *dev);
 
-#if (KERNEL_VERSION(5, 10, 0) <= LINUX_VERSION_CODE)
 /**
  * @brief Function to configure traffic class
  *
@@ -804,7 +840,6 @@ int ether_tc_setup_taprio(struct ether_priv_data *pdata,
 int ether_tc_setup_cbs(struct ether_priv_data *pdata,
 		       struct tc_cbs_qopt_offload *qopt);
 
-#endif
 
 /**
  * @brief Get Tx done timestamp from OSI and update in skb

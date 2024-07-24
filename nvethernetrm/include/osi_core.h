@@ -271,8 +271,11 @@ typedef my_lint_64		nvel64_t;
 #define OSI_CMD_RESUME			54U
 #ifdef HSI_SUPPORT
 #define OSI_CMD_HSI_INJECT_ERR		55U
-#endif
+#endif /* HSI_SUPPORT */
 #define OSI_CMD_READ_STATS		56U
+#ifdef HSI_SUPPORT
+#define OSI_CMD_READ_HSI_ERR		57U
+#endif /* HSI_SUPPORT */
 /** @} */
 
 #ifdef LOG_OSI
@@ -375,6 +378,8 @@ typedef my_lint_64		nvel64_t;
 #define RX_CSUM_ERR_IDX		4U
 #define AUTONEG_ERR_IDX		5U
 #define XPCS_WRITE_FAIL_IDX	6U
+#define PHY_WRITE_VERIFY_FAIL_IDX	7U
+#define MAC2MAC_ERR_IDX		8U
 #define MACSEC_RX_CRC_ERR_IDX	0U
 #define MACSEC_TX_CRC_ERR_IDX	1U
 #define MACSEC_RX_ICV_ERR_IDX	2U
@@ -401,7 +406,7 @@ typedef my_lint_64		nvel64_t;
  * @brief Maximum number of different mac error code
  * HSI_SW_ERR_CODE + Two (Corrected and Uncorrected error code)
  */
-#define OSI_HSI_MAX_MAC_ERROR_CODE		7U
+#define OSI_HSI_MAX_MAC_ERROR_CODE		9U
 
 /**
  * @brief Maximum number of different macsec error code
@@ -423,6 +428,13 @@ typedef my_lint_64		nvel64_t;
 #define OSI_MACSEC_RX_ICV_ERR		0x1007U
 #define OSI_MACSEC_REG_VIOL_ERR		0x1008U
 #define OSI_XPCS_WRITE_FAIL_ERR		0x1009U
+#define OSI_PHY_WRITE_VERIFY_ERR	0x100AU
+#define OSI_M2M_TSC_READ_ERR		0x100BU
+#define OSI_M2M_TIME_CAL_ERR		0x100CU
+#define OSI_M2M_ADJ_FREQ_ERR		0x100DU
+#define OSI_M2M_ADJ_TIME_ERR		0x100EU
+#define OSI_M2M_SET_TIME_ERR		0x100FU
+#define OSI_M2M_CONFIG_PTP_ERR		0x1010U
 
 #define OSI_HSI_MGBE0_UE_CODE		0x2A00U
 #define OSI_HSI_MGBE1_UE_CODE		0x2A01U
@@ -1283,6 +1295,11 @@ struct osi_core_priv_data {
 	 * 1- FPE HW configuration initiated to enable
 	 * 0- FPE HW configuration initiated to disable */
 	nveu32_t is_fpe_enabled;
+	/** Dummy SCI/SC/SA etc LUTs programmed with dummy parameter when no
+	 * session setup. SCI LUT hit created with VF's MACID */
+	nveu8_t macsec_dummy_sc_macids[OSI_MAX_NUM_SC][OSI_ETH_ALEN];
+	/** MACSEC initialization state */
+	nveu32_t macsec_initialized;
 #endif /* MACSEC_SUPPORT */
 	/** Pointer to OSD private data structure */
 	void *osd;
@@ -1357,9 +1374,11 @@ struct osi_core_priv_data {
 	nveu32_t mdc_cr;
 	/** VLAN tag stripping enable(1) or disable(0) */
 	nveu32_t strip_vlan_tag;
+#if !defined(L3L4_WILDCARD_FILTER)
 	/** L3L4 filter bit bask, set index corresponding bit for
 	 * filter if filter enabled */
 	nveu32_t l3l4_filter_bitmask;
+#endif /* !L3L4_WILDCARD_FILTER */
 	/** Flag which decides virtualization is enabled(1) or disabled(0) */
 	nveu32_t use_virtualization;
 	/** HW supported feature list */
