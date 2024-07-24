@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (c) 2019-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
+/* Copyright (c) 2019-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved */
 
 #ifndef ETHER_LINUX_H
 #define ETHER_LINUX_H
+
+#include <nvidia/conftest.h>
 
 #include <linux/platform/tegra/ptp-notifier.h>
 #include <linux/ptp_clock_kernel.h>
@@ -37,11 +39,11 @@
 #include <soc/tegra/virt/hv-ivc.h>
 #include <soc/tegra/fuse.h>
 #if IS_ENABLED(CONFIG_PAGE_POOL)
-#if defined(NV_SPLIT_PAGE_POOL_HEADER)
+#if defined(NV_NET_PAGE_POOL_H_PRESENT)
+#include <net/page_pool.h>
+#else
 #include <net/page_pool/types.h>
 #include <net/page_pool/helpers.h>
-#else
-#include <net/page_pool.h>
 #endif
 #define ETHER_PAGE_POOL
 #endif
@@ -574,7 +576,7 @@ struct ether_priv_data {
 	struct ether_vm_irq_data *vm_irq_data;
 #ifdef ETHER_PAGE_POOL
 	/** Pointer to page pool */
-	struct page_pool *page_pool;
+	struct page_pool *page_pool[OSI_MGBE_MAX_NUM_CHANS];
 #endif
 #ifdef CONFIG_DEBUG_FS
 	/** Debug fs directory pointer */
